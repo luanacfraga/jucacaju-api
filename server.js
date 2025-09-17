@@ -61,11 +61,9 @@ app.post("/api/recipes", (req, res) => {
   const { name, meal_type, ingredients, instructions } = req.body;
 
   if (!name || !meal_type || !ingredients) {
-    res
-      .status(400)
-      .json({
-        error: "Nome, tipo de refeição e ingredientes são obrigatórios",
-      });
+    res.status(400).json({
+      error: "Nome, tipo de refeição e ingredientes são obrigatórios",
+    });
     return;
   }
 
@@ -79,6 +77,86 @@ app.post("/api/recipes", (req, res) => {
     }
     res.json({ id: this.lastID, message: "Receita criada com sucesso!" });
   });
+});
+
+// Rota para processar ingredientes de uma receita
+app.post("/api/recipes/:id/process-ingredients", (req, res) => {
+  const { id } = req.params;
+  const { ingredients } = req.body;
+
+  if (!ingredients) {
+    res.status(400).json({ error: "Lista de ingredientes é obrigatória" });
+    return;
+  }
+
+  // Parse dos ingredientes (separar por vírgula e limpar espaços)
+  const ingredientList = ingredients
+    .split(",")
+    .map((ingredient) => ingredient.trim().toLowerCase())
+    .filter((ingredient) => ingredient.length > 0);
+
+  let processedCount = 0;
+  let addedToShoppingList = 0;
+
+  // Processar cada ingrediente
+  const processIngredient = (ingredient, callback) => {
+    // Verificar se o ingrediente já existe na despensa
+    db.get(
+      "SELECT * FROM pantry WHERE ingredient = ?",
+      [ingredient],
+      (err, row) => {
+        if (err) {
+          callback(err);
+          return;
+        }
+
+        if (row) {
+          // Ingrediente já existe, apenas incrementar contador
+          processedCount++;
+          callback(null);
+        } else {
+          // Ingrediente não existe, criar na despensa como "não disponível" (has_item = 0)
+          db.run(
+            "INSERT INTO pantry (ingredient, has_item) VALUES (?, 0)",
+            [ingredient],
+            function (err) {
+              if (err) {
+                callback(err);
+                return;
+              }
+              processedCount++;
+              addedToShoppingList++;
+              callback(null);
+            }
+          );
+        }
+      }
+    );
+  };
+
+  // Processar todos os ingredientes sequencialmente
+  let index = 0;
+  const processNext = () => {
+    if (index >= ingredientList.length) {
+      res.json({
+        message: `Processados ${processedCount} ingredientes`,
+        addedToShoppingList: addedToShoppingList,
+        ingredients: ingredientList,
+      });
+      return;
+    }
+
+    processIngredient(ingredientList[index], (err) => {
+      if (err) {
+        res.status(500).json({ error: err.message });
+        return;
+      }
+      index++;
+      processNext();
+    });
+  };
+
+  processNext();
 });
 
 app.put("/api/recipes/:id", (req, res) => {
